@@ -1,0 +1,13 @@
+---
+- name: Ping all servers
+  hosts: all
+  gather_facts: False
+  tasks:
+  - name: Ping servers
+    ping:
+
+- name: Configure apache
+  hosts: tag_Name_apache*
+  become: yes
+  roles:
+  - { role: geerlingguy.apache }

@@ -1,0 +1,407 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: "This template creates a VPC with 3 subnets (2 public & 1 private)"
+
+# Metadata section
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "PLACEHOLDER"
+        Parameters:
+          - PLACEHOLDER
+# Parameters section
+Parameters:
+  ParS3BucketName:
+    Type: String
+    Default: "ec2-bootstrap-ansible-dynamic-cloud-envs"
+
+  ParEnvironmentType:
+    Type: "String"
+    Default: "dev"
+    AllowedValues:
+      - "dev"
+      - "test"
+      - "prod"
+
+  # Network
+  ParVPCCIDRBlock:
+    Type: "String"
+    Default: "10.8.31.0/24"
+
+  ParSNPublic0CIDRBlock:
+    Type: "String"
+    Default: "10.8.31.0/26"
+
+  ParSNPublic1CIDRBlock:
+    Type: "String"
+    Default: "10.8.31.64/26"
+
+  ParSNPrivate0CIDRBlock:
+    Type: "String"
+    Default: "10.8.31.128/25"
+
+  # Instances
+  ParSSHKeyName:
+    Type: "AWS::EC2::KeyPair::KeyName"
+    Default: "zsoltk-iw-main"
+
+  ParBastionImageId:
+    Type: String
+    Default: "ami-3a849f5c" # Amazon Linux AMI 2017.03.1
+
+  ParApacheImageId:
+    Type: String
+    Default: "ami-d7b9a2b1" # Amazon Linux AMI 2017.03.1
+
+  # Allowed IPs
+  ParSSHIngressIP:
+    Type: "String"
+    Default: "94.2.190.9/32"
+
+# Resources to be created
+Resources:
+  #######
+  # VPC #
+  #######
+  ClientVPC:
+    Type: "AWS::EC2::VPC"
+    Properties:
+      CidrBlock: !Ref ParVPCCIDRBlock
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-${ParEnvironmentType}-vpc
+
+  ###########
+  # Network #
+  # Internet GW & attachment
+  vpcInternetGateway:
+    Type: "AWS::EC2::InternetGateway"
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-${ParEnvironmentType}-igw
+
+  vpcGWAttachment:
+    Type: "AWS::EC2::VPCGatewayAttachment"
+    Properties:
+      VpcId: !Ref ClientVPC
+      InternetGatewayId: !Ref vpcInternetGateway
+
+  # EIP Allocations for the NAT GW (more GW as we introduce more az)
+  eipforNATGW0:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+    DependsOn: vpcGWAttachment
+
+  # Subnets
+  snPublic0:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref ClientVPC
+      CidrBlock: !Ref ParSNPublic0CIDRBlock
+      AvailabilityZone: "eu-west-1a"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-${ParEnvironmentType}-sn-public0
+  snPublic1:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref ClientVPC
+      CidrBlock: !Ref ParSNPublic1CIDRBlock
+      AvailabilityZone: "eu-west-1b"
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-${ParEnvironmentType}-sn-public1
+  snPrivate0:
+    Type: "AWS::EC2::Subnet"
+    Properties:
+      VpcId: !Ref ClientVPC
+      CidrBlock: !Ref ParSNPrivate0CIDRBlock
+      AvailabilityZone: "eu-west-1a"
+      MapPublicIpOnLaunch: false
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-${ParEnvironmentType}-sn-private
+
+  # NAT Gateways for the vpc
+  vpcNATGateway0:
+    Type: "AWS::EC2::NatGateway"
+    Properties:
+      AllocationId: !GetAtt eipforNATGW0.AllocationId
+      SubnetId: !Ref snPublic0
+    DependsOn: eipforNATGW0
+
+  # Public route & table for the vpc
+  vpcPublicRouteTable:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref ClientVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-${ParEnvironmentType}-public-rt
+  vpcPublicRoute:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref vpcPublicRouteTable
+      DestinationCidrBlock: "0.0.0.0/0"
+      GatewayId: !Ref vpcInternetGateway
+    DependsOn: vpcInternetGateway
+
+  vpcPrivateRouteTable0:
+    Type: "AWS::EC2::RouteTable"
+    Properties:
+      VpcId: !Ref ClientVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-${ParEnvironmentType}-private-rt
+  vpcPrivateRoute0:
+    Type: "AWS::EC2::Route"
+    Properties:
+      RouteTableId: !Ref vpcPrivateRouteTable0
+      DestinationCidrBlock: "0.0.0.0/0"
+      NatGatewayId: !Ref vpcNATGateway0
+    DependsOn: vpcNATGateway0
+
+  # Subnet & RouteTable associactions (both private & public)
+  rtaPublic0:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref snPublic0
+      RouteTableId: !Ref vpcPublicRouteTable
+  rtaPublic1:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref snPublic1
+      RouteTableId: !Ref vpcPublicRouteTable
+  rtaPrivate0:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"
+    Properties:
+      SubnetId: !Ref snPrivate0
+      RouteTableId: !Ref vpcPrivateRouteTable0
+
+  #############
+  # Internals #
+  # Security groups for the VPC
+  sgInternalAccess:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Default internal access"
+      VpcId: !Ref ClientVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-${ParEnvironmentType}-internal-lb-sg
+
+  sgiBastionAccess:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: sgInternalAccess
+    Properties:
+      IpProtocol: "TCP"
+      FromPort: "22"
+      ToPort: "22"
+      SourceSecurityGroupId: !Ref sgDeveloperAccess
+      GroupId: !Ref sgInternalAccess
+  sgiApachePublicAccess:
+    Type: AWS::EC2::SecurityGroupIngress
+    DependsOn: sgInternalAccess
+    Properties:
+      IpProtocol: "TCP"
+      FromPort: 80
+      ToPort: 80
+      SourceSecurityGroupId: !Ref sgApachePublicAccess
+      GroupId: !Ref sgInternalAccess
+
+  # Bastion
+  sgDeveloperAccess:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Developer access to the services"
+      VpcId: !Ref ClientVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-${ParEnvironmentType}-developer-sg
+      SecurityGroupIngress:
+        - IpProtocol: "TCP"
+          FromPort: "22"
+          ToPort: "22"
+          CidrIp: !Ref ParSSHIngressIP
+  roleEC2iBastion:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Join ["-", [!Ref "AWS::StackName", "roleEC2iBastion"]]
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+  profileEC2iBastion:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref roleEC2iBastion
+  asglcBastion:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: true
+      IamInstanceProfile: !Ref profileEC2iBastion
+      ImageId: !Ref ParBastionImageId
+      InstanceType: "t2.nano"
+      KeyName: !Ref ParSSHKeyName
+      SecurityGroups:
+        - !Ref sgDeveloperAccess
+      UserData:
+        "Fn::Base64":
+          !Sub |
+            #!/bin/bash -v
+            # Update distribution
+            yum -y update
+  asgBastion:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref snPublic0
+      LaunchConfigurationName: !Ref asglcBastion
+      MinSize: 1
+      MaxSize: 1
+      DesiredCapacity: 1
+      Tags:
+        - Key: Name
+          Value: !Sub bastion-${AWS::StackName}-${ParEnvironmentType}
+          PropagateAtLaunch: true
+
+  # Apache
+  sgApachePublicAccess:
+    Type: "AWS::EC2::SecurityGroup"
+    Properties:
+      GroupDescription: "Restricted access to ALB"
+      VpcId: !Ref ClientVPC
+      Tags:
+        - Key: Name
+          Value: !Sub sgApachePublicAccess-${AWS::StackName}-${ParEnvironmentType}
+      SecurityGroupIngress:
+        - IpProtocol: "TCP"
+          FromPort: "80"
+          ToPort: "80"
+          CidrIp: 0.0.0.0/0
+  roleEC2iApache:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: !Sub ${AWS::StackName}-roleEC2iDocker
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+  profileEC2iApache:
+    Type: "AWS::IAM::InstanceProfile"
+    Properties:
+      Path: "/"
+      Roles:
+        - !Ref roleEC2iApache
+  ec2ApachePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub ${AWS::StackName}-ec2ApachePolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:ListBucket
+              - cloudwatch:PutMetrics
+            Resource:
+              - "*"
+      Roles:
+        - !Ref roleEC2iApache
+  # Standard instance
+  asglcApache:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      AssociatePublicIpAddress: false
+      IamInstanceProfile: !Ref profileEC2iApache
+      ImageId: !Ref ParApacheImageId
+      InstanceType: "t2.micro"
+      KeyName: !Ref ParSSHKeyName
+      SecurityGroups:
+        - !Ref sgInternalAccess
+      UserData:
+        "Fn::Base64":
+          !Sub |
+            #!/bin/bash -v
+            # Update distribution
+            yum -y update
+            #Run cfn-init
+            /opt/aws/bin/cfn-init -s ${AWS::StackName} -r asglcApache --region ${AWS::Region} || error_exit 'Failed to run cfn-init'
+            #
+            #
+  asgApache:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      VPCZoneIdentifier:
+        - !Ref snPrivate0
+      LaunchConfigurationName: !Ref asglcApache
+      TargetGroupARNs:
+        - !Ref tgAlbApache
+      MinSize: 1
+      MaxSize: 1
+      DesiredCapacity: 1
+      Tags:
+        - Key: Name
+          Value: !Sub apache-${AWS::StackName}-${ParEnvironmentType}
+          PropagateAtLaunch: true
+
+  # Public ALB
+  albPublic:
+    Type: "AWS::ElasticLoadBalancingV2::LoadBalancer"
+    Properties:
+      Name: !Sub alb-pub-${AWS::StackName}
+      Scheme: "internet-facing"
+      SecurityGroups:
+        - !Ref sgApachePublicAccess
+      Subnets:
+        - !Ref snPublic0
+        - !Ref snPublic1
+      Tags:
+        - Key: Name
+          Value: !Sub alb-pub-${AWS::StackName}-${ParEnvironmentType}
+      IpAddressType: "ipv4"
+  tgAlbApache:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      HealthCheckIntervalSeconds: 60
+      UnhealthyThresholdCount: 10
+      HealthCheckPath: /
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref ClientVPC
+      Tags:
+        - Key: Name
+          Value: !Sub tg-apache-${AWS::StackName}-${ParEnvironmentType}
+  lnAlbApache:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref tgAlbApache
+      LoadBalancerArn: !Ref albPublic
+      Port: 80
+      Protocol: HTTP
+
+Outputs:
+  ClientVPCOutput:
+    Description: VPC
+    Value: !GetAtt albPublic.DNSName
+    Export: 
+      Name: !Sub ${AWS::StackName}-albPublic-DNSName

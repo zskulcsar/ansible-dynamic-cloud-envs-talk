@@ -1,0 +1,7 @@
+---
+
+- name: Configure apache
+  hosts: localhost
+  become: yes
+  roles:
+  - { role: geerlingguy.apache }

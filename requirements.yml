@@ -1,0 +1,3 @@
+---
+# Run ansible-galaxy install -r requirements.yml to fetch all dependencies
+- src: geerlingguy.apache
