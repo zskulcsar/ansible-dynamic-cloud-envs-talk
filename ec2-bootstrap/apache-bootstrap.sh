@@ -4,7 +4,7 @@
 sudo pip install ansible
 
 # Install the required roles
-ansible-galaxy install -r /root/requirements.yml
+/usr/local/bin/ansible-galaxy install -r /root/requirements.yml
 
 # Deploy the role
-ansible-playbook /root/apache-boostrap.yml
+/usr/local/bin/ansible-playbook /root/apache-bootstrap.yml

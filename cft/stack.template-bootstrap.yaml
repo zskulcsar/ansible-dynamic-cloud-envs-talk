@@ -326,20 +326,20 @@ Resources:
       Roles:
         - !Ref roleEC2iApache
 
-  # Boostrapped instance
+  # Bootstrapped instance
   asglcApache:
     Type: AWS::AutoScaling::LaunchConfiguration
     Metadata:
       AWS::CloudFormation::Init:
         config:
           files:
-            /root/apache-boostrap.sh:
+            /root/apache-bootstrap.sh:
               source: !Sub https://${ParS3BucketName}.s3-eu-west-1.amazonaws.com/${ParEnvironmentType}/apache-bootstrap.sh
               mode: "000500"
               owner: root
               group: root
               authentication: S3AccessCreds
-            /root/apache-boostrap.yaml:
+            /root/apache-bootstrap.yml:
               source: !Sub https://${ParS3BucketName}.s3-eu-west-1.amazonaws.com/${ParEnvironmentType}/apache-bootstrap.yml
               mode: "000400"
               owner: root
@@ -374,8 +374,8 @@ Resources:
             #Run cfn-init
             /opt/aws/bin/cfn-init -s ${AWS::StackName} -r asglcApache --region ${AWS::Region} || error_exit 'Failed to run cfn-init'
             #
-            # Boostrap the server
-            /root/apache-boostrap.sh
+            # Bootstrap the server
+            /root/apache-bootstrap.sh
   asgApache:
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
